@@ -1,190 +1,109 @@
-#!/usr/bin/env python3
-"""
-simple_password_checker.py
-A small password strength checker for educational/ethical use.
-
-How to run:
-$ python simple_password_checker.py
-or
-$ python simple_password_checker.py "SomePassword123!"
-"""
+# simple_password_checker.py
 
 import sys
 import re
 import math
 from collections import Counter
+import hashlib
+import requests
+import string
 
-# a small list of very common passwords (extendable)
-COMMON_PASSWORDS = {
-    "123456", "password", "12345678", "qwerty", "123456789",
-    "12345", "1234", "111111", "1234567", "dragon",
-    "123123", "baseball", "abc123", "football", "monkey",
-    "letmein", "696969", "shadow", "master", "666666",
-    "qwertyuiop", "123321", "mustang", "1234567890", "michael"
-}
-
-# checks for simple sequences (like 'abcd', '1234')
-def has_sequential_chars(s, seq_len=4):
-    s_lower = s.lower()
-    # check ascending sequences
-    for i in range(len(s_lower) - seq_len + 1):
-        chunk = s_lower[i:i+seq_len]
-        if all(ord(chunk[j+1]) - ord(chunk[j]) == 1 for j in range(len(chunk)-1)):
-            return True
-    # descending
-    for i in range(len(s_lower) - seq_len + 1):
-        chunk = s_lower[i:i+seq_len]
-        if all(ord(chunk[j]) - ord(chunk[j+1]) == 1 for j in range(len(chunk)-1)):
-            return True
-    return False
-
-def score_password(pw: str) -> dict:
-    """
-    Return a dict with:
-      - score (0..100)
-      - verdict (Very Weak, Weak, Fair, Good, Strong)
-      - feedback (list of suggestions)
-      - details (component scores)
-    """
-    if not pw:
-        return {"score": 0, "verdict": "Very Weak", "feedback": ["Password is empty."], "details": {}}
-
-    length = len(pw)
-    categories = {
-        "lower": bool(re.search(r"[a-z]", pw)),
-        "upper": bool(re.search(r"[A-Z]", pw)),
-        "digit": bool(re.search(r"\d", pw)),
-        "symbol": bool(re.search(r"[^\w\s]", pw)),  # not alphanumeric or underscore
-    }
-    unique_chars = len(set(pw))
-    repeats = any(count > (length * 0.6) for count in Counter(pw).values())  # heavy repetition
-    sequential = has_sequential_chars(pw)
-    all_lower = pw.islower()
-    all_upper = pw.isupper()
-
-    # Base scoring
+# ------------------------
+# Scoring functions
+# ------------------------
+def score_password(password):
     score = 0
-    details = {}
+    length = len(password)
 
-    # Length component (max 40 points)
-    # using logarithmic-like scaling so benefits plateau
-    length_score = min(40, 4 * length)  # 4 points per char up to 40 (i.e., 10+ chars saturate)
-    details["length_score"] = length_score
-    score += length_score
+    # Length score
+    if length >= 8:
+        score += 20
+    elif length >= 6:
+        score += 10
 
-    # Character variety (max 30)
-    variety_count = sum(categories.values())
-    variety_score = {1: 0, 2: 10, 3: 20, 4: 30}[variety_count]
-    details["variety_count"] = variety_count
-    details["variety_score"] = variety_score
-    score += variety_score
+    # Variety
+    if re.search(r'[a-z]', password):
+        score += 10
+    if re.search(r'[A-Z]', password):
+        score += 10
+    if re.search(r'[0-9]', password):
+        score += 10
+    if re.search(r'[^a-zA-Z0-9]', password):
+        score += 10
 
-    # Uncommonness / common password penalty (max -40)
-    common_penalty = 0
-    lowered = pw.lower()
-    if lowered in COMMON_PASSWORDS:
-        common_penalty = 40
-    else:
-        # partial word matches (like 'password123')
-        for common in COMMON_PASSWORDS:
-            if common in lowered:
-                common_penalty = max(common_penalty, 25)
-    details["common_penalty"] = -common_penalty
-    score -= common_penalty
+    # Bonus for unique characters
+    score += len(set(password))
 
-    # repetition penalty
-    repeat_penalty = 10 if repeats else 0
-    details["repeat_penalty"] = -repeat_penalty
-    score -= repeat_penalty
+    return min(score, 100)
 
-    # sequential penalty
-    seq_penalty = 10 if sequential else 0
-    details["seq_penalty"] = -seq_penalty
-    score -= seq_penalty
-
-    # all-lower or all-upper minor penalty
-    case_penalty = 5 if (all_lower or all_upper) and length < 16 else 0
-    details["case_penalty"] = -case_penalty
-    score -= case_penalty
-
-    # unique char bonus (small)
-    unique_bonus = min(10, (unique_chars - 3) * 2) if unique_chars > 3 else 0
-    details["unique_bonus"] = unique_bonus
-    score += unique_bonus
-
-    # clamp score
-    score = max(0, min(100, int(round(score))))
-
-    # Verdict
-    if score < 20:
+def pretty_print(score):
+    if score < 30:
         verdict = "Very Weak"
-    elif score < 40:
+    elif score < 50:
         verdict = "Weak"
-    elif score < 60:
+    elif score < 70:
         verdict = "Fair"
-    elif score < 80:
+    elif score < 90:
         verdict = "Good"
     else:
         verdict = "Strong"
+    print(f"Score: {score}/100   Verdict: {verdict}")
 
-    # Feedback generation
-    feedback = []
-    if length < 8:
-        feedback.append("Use at least 8 characters; 12+ is better.")
-    elif length < 12:
-        feedback.append("Consider increasing length to 12+ characters for stronger security.")
-    if categories["lower"] + categories["upper"] + categories["digit"] + categories["symbol"] < 3:
-        feedback.append("Include a mix of uppercase, lowercase, digits and symbols.")
-    if lowered in COMMON_PASSWORDS or any(common in lowered for common in COMMON_PASSWORDS):
-        feedback.append("Avoid common passwords or obvious words/numbers.")
-    if repeats:
-        feedback.append("Avoid repeating the same character many times.")
-    if sequential:
-        feedback.append("Avoid simple sequences like 'abcd' or '1234'.")
-    if unique_chars < 4:
-        feedback.append("Use more unique characters.")
-    if not feedback:
-        feedback.append("Good password, but consider increasing length for maximum safety.")
-
-    return {
-        "score": score,
-        "verdict": verdict,
-        "feedback": feedback,
-        "details": details
-    }
-
-def pretty_print(result: dict, pw: str = None):
-    print("Password Analysis")
-    print("-----------------")
-    if pw is not None:
-        print(f"Password: {pw}")
-    print(f"Score: {result['score']}/100   Verdict: {result['verdict']}")
-    print("\nSuggestions:")
-    for item in result["feedback"]:
-        print(" -", item)
-    print("\nDetails:")
-    for k, v in result["details"].items():
-        print(f"  {k}: {v}")
-    print()
-
-def main():
-    if len(sys.argv) >= 2:
-        pwd = sys.argv[1]
-        res = score_password(pwd)
-        pretty_print(res, pw=pwd)
-        return
-
-    # interactive
+# ------------------------
+# Breach check
+# ------------------------
+def check_pwned(password):
+    sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
+    prefix, suffix = sha1[:5], sha1[5:]
+    url = f"https://api.pwnedpasswords.com/range/{prefix}"
     try:
-        while True:
-            pwd = input("Enter password to test (or blank to exit): ").strip()
-            if not pwd:
-                print("Exiting.")
-                break
-            res = score_password(pwd)
-            pretty_print(res)
-    except (KeyboardInterrupt, EOFError):
-        print("\nExiting.")
+        res = requests.get(url)
+    except requests.exceptions.RequestException:
+        return "Error connecting to HIBP API"
+    if res.status_code != 200:
+        return "Error checking breach"
+    hashes = (line.split(':') for line in res.text.splitlines())
+    for h, count in hashes:
+        if h == suffix:
+            return f"Password has been seen {count} times in breaches!"
+    return "Password not found in breaches."
+
+# ------------------------
+# Entropy calculation
+# ------------------------
+def password_entropy(password):
+    pool = 0
+    if any(c.islower() for c in password):
+        pool += 26
+    if any(c.isupper() for c in password):
+        pool += 26
+    if any(c.isdigit() for c in password):
+        pool += 10
+    if any(c in string.punctuation for c in password):
+        pool += len(string.punctuation)
+    entropy = len(password) * math.log2(pool) if pool else 0
+    return round(entropy, 2)
+
+# ------------------------
+# Main Program
+# ------------------------
+def main():
+    while True:
+        pw = input("Enter password to test (or blank to exit): ").strip()
+        if not pw:
+            print("Exiting...")
+            break
+
+        score = score_password(pw)
+        pretty_print(score)
+
+        breach_result = check_pwned(pw)
+        print("Breach Status:", breach_result)
+
+        entropy = password_entropy(pw)
+        print("Entropy:", entropy, "bits")
+
+        print("-" * 40)
 
 if __name__ == "__main__":
     main()
